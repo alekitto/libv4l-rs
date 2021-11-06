@@ -1,5 +1,6 @@
 use std::io;
-use std::time::Instant;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use v4l::buffer::Type;
 use v4l::io::traits::{CaptureStream, OutputStream};
@@ -56,10 +57,28 @@ fn main() -> io::Result<()> {
 
     let start = Instant::now();
     let mut megabytes_ps: f64 = 0.0;
-    for i in 0..count {
+    let mut i = 0;
+    loop {
+        if i >= count {
+            break;
+        }
+
         let t0 = Instant::now();
-        let (buf_in, buf_in_meta) = CaptureStream::next(&mut cap_stream)?;
-        let (buf_out, buf_out_meta) = OutputStream::next(&mut out_stream)?;
+        let capture_next = CaptureStream::next(&mut cap_stream)?;
+        if capture_next.is_none() {
+            sleep(Duration::from_millis(5));
+            continue;
+        }
+
+        let output_next = OutputStream::next(&mut out_stream)?;
+        if output_next.is_none() {
+            sleep(Duration::from_millis(5));
+            continue;
+        }
+
+        i += 1;
+        let (buf_in, buf_in_meta) = capture_next.unwrap();
+        let (buf_out, buf_out_meta) = output_next.unwrap();
 
         // Output devices generally cannot know the exact size of the output buffers for
         // compressed formats (e.g. MJPG). They will however allocate a size that is always

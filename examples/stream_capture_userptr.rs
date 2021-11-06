@@ -1,5 +1,6 @@
 use std::io;
-use std::time::Instant;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use v4l::buffer::Type;
 use v4l::io::traits::CaptureStream;
@@ -30,9 +31,21 @@ fn main() -> io::Result<()> {
 
     let start = Instant::now();
     let mut megabytes_ps: f64 = 0.0;
-    for i in 0..count {
+    let mut i = 0;
+    loop {
+        if i >= count {
+            break;
+        }
+
         let t0 = Instant::now();
-        let (buf, meta) = stream.next()?;
+        let next = stream.next()?;
+        if next.is_none() {
+            sleep(Duration::from_millis(5));
+            continue;
+        }
+
+        i += 1;
+        let (buf, meta) = next.unwrap();
         let duration_us = t0.elapsed().as_micros();
 
         let cur = buf.len() as f64 / 1_048_576.0 * 1_000_000.0 / duration_us as f64;

@@ -1,7 +1,8 @@
 use std::io;
 use std::sync::{mpsc, RwLock};
 use std::thread;
-use std::time::Instant;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use glium::index::PrimitiveType;
 use glium::{glutin, Surface};
@@ -127,7 +128,13 @@ fn main() -> io::Result<()> {
             MmapStream::with_buffers(&mut *dev, Type::VideoCapture, buffer_count).unwrap();
 
         loop {
-            let (buf, _) = stream.next().unwrap();
+            let next = CaptureStream::next(&mut stream).unwrap();
+            if next.is_none() {
+                sleep(Duration::from_millis(1));
+                continue;
+            }
+
+            let (buf, _) = next.unwrap();
             let data = buf.to_vec();
             tx.send(data).unwrap();
         }

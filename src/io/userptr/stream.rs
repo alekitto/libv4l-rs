@@ -114,7 +114,20 @@ impl StreamTrait for Stream {
 }
 
 impl<'a> CaptureStream<'a> for Stream {
-    fn queue(&mut self, index: usize) -> io::Result<()> {
+    fn queue(&mut self, index: usize) -> io::Result<Option<()>> {
+        unsafe {
+            let mut pfd = libc::pollfd {
+                fd: self.handle.fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            let r = libc::poll(&mut pfd, libc::POLLIN as u64, 0);
+            if r == 0 {
+                return Ok(None);
+            }
+        }
+
         let mut v4l2_buf: v4l2_buffer;
         let buf = unsafe { &mut self.arena.get_unchecked(index) };
         unsafe {
@@ -131,7 +144,7 @@ impl<'a> CaptureStream<'a> for Stream {
             )?;
         }
 
-        Ok(())
+        Ok(Some(()))
     }
 
     fn dequeue(&mut self) -> io::Result<usize> {
@@ -167,16 +180,21 @@ impl<'a> CaptureStream<'a> for Stream {
         self.buf_meta.get(index)
     }
 
-    fn next(&'a mut self) -> io::Result<(&Self::Item, &Metadata)> {
-        if !self.active {
+    fn next(&'a mut self) -> io::Result<Option<(&Self::Item, &Metadata)>> {
+        let q = if !self.active {
             // Enqueue all buffers once on stream start
             for index in 0..self.arena.len() {
                 self.queue(index)?;
             }
 
             self.start()?;
+            Some(())
         } else {
-            self.queue(self.arena_index)?;
+            self.queue(self.arena_index)?
+        };
+
+        if q.is_none() {
+            return Ok(None);
         }
 
         self.arena_index = self.dequeue()?;
@@ -186,7 +204,7 @@ impl<'a> CaptureStream<'a> for Stream {
         unsafe {
             let bytes = self.arena.get_unchecked(self.arena_index);
             let meta = self.buf_meta.get_unchecked(self.arena_index);
-            Ok((bytes, meta))
+            Ok(Some((bytes, meta)))
         }
     }
 }

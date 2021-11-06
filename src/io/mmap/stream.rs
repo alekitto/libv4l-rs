@@ -114,7 +114,20 @@ impl<'a> StreamTrait for Stream<'a> {
 }
 
 impl<'a, 'b> CaptureStream<'b> for Stream<'a> {
-    fn queue(&mut self, index: usize) -> io::Result<()> {
+    fn queue(&mut self, index: usize) -> io::Result<Option<()>> {
+        unsafe {
+            let mut pfd = libc::pollfd {
+                fd: self.handle.fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            let r = libc::poll(&mut pfd, libc::POLLIN as u64, 0);
+            if r == 0 {
+                return Ok(None);
+            }
+        }
+
         let mut v4l2_buf: v4l2_buffer;
         unsafe {
             v4l2_buf = mem::zeroed();
@@ -128,7 +141,7 @@ impl<'a, 'b> CaptureStream<'b> for Stream<'a> {
             )?;
         }
 
-        Ok(())
+        Ok(Some(()))
     }
 
     fn dequeue(&mut self) -> io::Result<usize> {
@@ -164,16 +177,22 @@ impl<'a, 'b> CaptureStream<'b> for Stream<'a> {
         self.buf_meta.get(index)
     }
 
-    fn next(&'b mut self) -> io::Result<(&Self::Item, &Metadata)> {
-        if !self.active {
+    fn next(&'b mut self) -> io::Result<Option<(&Self::Item, &Metadata)>> {
+        let q = if !self.active {
             // Enqueue all buffers once on stream start
             for index in 0..self.arena.len() {
                 CaptureStream::queue(self, index)?;
             }
 
             self.start()?;
+
+            Some(())
         } else {
-            CaptureStream::queue(self, self.arena_index)?;
+            CaptureStream::queue(self, self.arena_index)?
+        };
+
+        if q.is_none() {
+            return Ok(None);
         }
 
         self.arena_index = CaptureStream::dequeue(self)?;
@@ -183,13 +202,26 @@ impl<'a, 'b> CaptureStream<'b> for Stream<'a> {
         unsafe {
             let bytes = self.arena.get_unchecked(self.arena_index);
             let meta = self.buf_meta.get_unchecked(self.arena_index);
-            Ok((bytes, meta))
+            Ok(Some((bytes, meta)))
         }
     }
 }
 
 impl<'a, 'b> OutputStream<'b> for Stream<'a> {
-    fn queue(&mut self, index: usize) -> io::Result<()> {
+    fn queue(&mut self, index: usize) -> io::Result<Option<()>> {
+        unsafe {
+            let mut pfd = libc::pollfd {
+                fd: self.handle.fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            let r = libc::poll(&mut pfd, libc::POLLIN as u64, 0);
+            if r == 0 {
+                return Ok(None);
+            }
+        }
+
         let mut v4l2_buf: v4l2_buffer;
         unsafe {
             v4l2_buf = mem::zeroed();
@@ -208,7 +240,9 @@ impl<'a, 'b> OutputStream<'b> for Stream<'a> {
                 self.handle.fd(),
                 v4l2::vidioc::VIDIOC_QBUF,
                 &mut v4l2_buf as *mut _ as *mut std::os::raw::c_void,
-            )
+            )?;
+
+            Ok(Some(()))
         }
     }
 
@@ -245,7 +279,7 @@ impl<'a, 'b> OutputStream<'b> for Stream<'a> {
         self.buf_meta.get_mut(index)
     }
 
-    fn next(&'b mut self) -> io::Result<(&mut Self::Item, &mut Metadata)> {
+    fn next(&'b mut self) -> io::Result<Option<(&mut Self::Item, &mut Metadata)>> {
         let init = !self.active;
         if !self.active {
             self.start()?;
@@ -255,7 +289,11 @@ impl<'a, 'b> OutputStream<'b> for Stream<'a> {
         // call to this function from the call site will happen just after the buffers have been
         // allocated, meaning we need to return the empty buffer initially so it can be filled.
         if !init {
-            OutputStream::queue(self, self.arena_index)?;
+            let q = OutputStream::queue(self, self.arena_index)?;
+            if q.is_none() {
+                return Ok(None);
+            }
+
             self.arena_index = OutputStream::dequeue(self)?;
         }
 
@@ -264,7 +302,7 @@ impl<'a, 'b> OutputStream<'b> for Stream<'a> {
         unsafe {
             let bytes = self.arena.get_unchecked_mut(self.arena_index);
             let meta = self.buf_meta.get_unchecked_mut(self.arena_index);
-            Ok((bytes, meta))
+            Ok(Some((bytes, meta)))
         }
     }
 }
